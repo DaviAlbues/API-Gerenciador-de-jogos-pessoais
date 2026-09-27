@@ -11,21 +11,21 @@ let jogos = [
     titulo: "The Witcher 3: Wild Hunt", 
     genero: "RPG de Ação", 
     ano: 2015, 
-    capa: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=500&auto=format&fit=crop&q=60" 
+    capa: "https://upload.wikimedia.org/wikipedia/pt/0/06/TW3_Wild_Hunt.png?utm_source=pt.wikipedia.org&utm_campaign=index&utm_content=original" 
   },
   { 
     id: "2", 
     titulo: "God of War", 
     genero: "Ação / Aventura", 
     ano: 2018, 
-    capa: "https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?w=500&auto=format&fit=crop&q=60" 
+    capa: "https://preview.redd.it/sejam-sinceros-qual-a-opini%C3%A3o-de-voc%C3%AAs-sobre-god-of-war-de-v0-604vkqr831rf1.jpg?width=640&crop=smart&auto=webp&s=a3062eee291821aa655d6e097841b6c67e162d54" 
   },
   { 
     id: "3", 
     titulo: "Cyberpunk 2077", 
     genero: "RPG Futurista", 
     ano: 2020, 
-    capa: "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=500&auto=format&fit=crop&q=60" 
+    capa: "https://store-images.s-microsoft.com/image/apps.47379.63407868131364914.bcaa868c-407e-42c2-baeb-48a3c9f29b54.89bb995b-b066-4a53-9fe4-0260ce07e894" 
   }
 ];
 
