@@ -3,7 +3,7 @@ const app = express();
 
 app.use(express.json());
 
-// Requisito I: Dados mockados com capas em formato vertical (estilo capa de jogo)
+// Requisito I: Dados mockados com capas em formato vertical
 let jogos = [
   { 
     id: "1", 
@@ -53,7 +53,7 @@ const registrarLog = (req, res, next) => {
   next();
 };
 
-// Aplicando os middlewares globais (exceto na rota visual e PDF)
+// Aplicando os middlewares globais 
 app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/jogos/pdf' || req.path === '/ui') return next();
   verificarDiasUteis(req, res, next);
@@ -61,7 +61,7 @@ app.use((req, res, next) => {
 
 app.use(registrarLog);
 
-// Rota Visual com capas verticais estilizadas (Tailwind CSS)
+// Rota Visual com capas verticais estilizadas
 app.get('/', (req, res) => {
   const html = `
     <!DOCTYPE html>
@@ -115,7 +115,7 @@ app.get('/jogos', (req, res) => {
   res.json(jogos);
 });
 
-// Requisito H: Rota GET que gera um relatório otimizado em PDF (Compatível a 100% com Vercel)
+// Requisito H: Rota GET que gera um relatório otimizado em PDF 
 app.get('/jogos/pdf', (req, res) => {
   const htmlPdf = `
     <!DOCTYPE html>
@@ -199,7 +199,7 @@ app.delete('/jogos/:id', (req, res) => {
 
 // Requisito G: Rota GET que retorna os registros de requisição em uma data informada
 app.get('/logs', (req, res) => {
-  const { data } = req.query; // Exemplo: /logs?data=2026-09-27
+  const { data } = req.query; 
   if (!data) {
     return res.status(400).json({ erro: "Informe a data no parâmetro ?data=AAAA-MM-DD" });
   }
