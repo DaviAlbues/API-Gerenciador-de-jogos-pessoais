@@ -11,21 +11,21 @@ let jogos = [
     titulo: "The Witcher 3: Wild Hunt", 
     genero: "RPG de Ação", 
     ano: 2015, 
-    capa: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=600&auto=format&fit=crop&q=80&ar=3:4" 
+    capa: "https://image.api.playstation.com/vulcan/ap/rnd/202211/0711/qezXTVn1ExqBjVjR5Ipm97IK.png" 
   },
   { 
     id: "2", 
     titulo: "God of War", 
     genero: "Ação / Aventura", 
     ano: 2018, 
-    capa: "https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?w=600&auto=format&fit=crop&q=80&ar=3:4" 
+    capa: "https://m.media-amazon.com/images/M/MV5BNjJiNTFhY2QtNzZkYi00MDNiLWEzNGEtNWE1NzBkOWIxNmY5XkEyXkFqcGc@._V1_.jpg" 
   },
   { 
     id: "3", 
     titulo: "Cyberpunk 2077", 
     genero: "RPG Futurista", 
     ano: 2020, 
-    capa: "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop&q=80&ar=3:4" 
+    capa: "https://store-images.s-microsoft.com/image/apps.47379.63407868131364914.bcaa868c-407e-42c2-baeb-48a3c9f29b54.89bb995b-b066-4a53-9fe4-0260ce07e894" 
   }
 ];
 
@@ -76,8 +76,7 @@ app.get('/', (req, res) => {
     <body class="bg-gray-950 text-white min-h-screen font-sans">
         <div class="container mx-auto px-4 py-12">
             <header class="text-center mb-12">
-                <h1 class="text-4xl font-extrabold text-indigo-400 mb-3 tracking-wide">🎮 Gerenciador de Jogos</h1>
-                <p class="text-gray-400 text-lg">Trabalho Prático - PSW2 (IFCE Campus Crato)</p>
+                <h1 class="text-4xl font-extrabold text-indigo-400 mb-3 tracking-wide">Gerenciador de Jogos</h1>
                 <div class="mt-6 flex justify-center gap-4">
                     <a href="/jogos" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-lg">Ver JSON da API</a>
                     <a href="/jogos/pdf" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-lg">Descarregar PDF (Requisito H)</a>
