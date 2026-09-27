@@ -35,7 +35,7 @@ let logsRequisicoes = [];
 const verificarDiasUteis = (req, res, next) => {
   const diaSemana = new Date().getDay(); // 0 = Domingo, 6 = Sábado
   // Se quiseres testar livremente ao fim de semana para a apresentação, podes comentar esta verificação temporariamente
-  if (diaSemana === 0 || diaSemana === 6) {
+  if (diaSemana === 6) {
     return res.status(403).json({ 
       erro: "Acesso negado. A API funciona apenas de segunda a sexta-feira (Requisito E)." 
     });
