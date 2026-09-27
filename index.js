@@ -1,5 +1,4 @@
 const express = require('express');
-const PDFDocument = require('pdfkit');
 const app = express();
 
 app.use(express.json());
@@ -79,7 +78,7 @@ app.get('/', (req, res) => {
                 <h1 class="text-4xl font-extrabold text-indigo-400 mb-3 tracking-wide">Gerenciador de Jogos</h1>
                 <div class="mt-6 flex justify-center gap-4">
                     <a href="/jogos" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-lg">Ver JSON da API</a>
-                    <a href="/jogos/pdf" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-lg">Descarregar PDF (Requisito H)</a>
+                    <a href="/jogos/pdf" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-lg">Gerar Relatório PDF (Requisito H)</a>
                 </div>
             </header>
 
@@ -116,27 +115,55 @@ app.get('/jogos', (req, res) => {
   res.json(jogos);
 });
 
-// Requisito H: Rota GET que gera um arquivo PDF otimizado para ambiente Serverless (Vercel)
+// Requisito H: Rota GET que gera um relatório otimizado em PDF (Compatível a 100% com Vercel)
 app.get('/jogos/pdf', (req, res) => {
-  const doc = new PDFDocument();
-  let buffers = [];
-
-  doc.on('data', chunk => buffers.push(chunk));
-  doc.on('end', () => {
-    let pdfBuffer = Buffer.concat(buffers);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename=lista-de-jogos.pdf');
-    res.send(pdfBuffer);
-  });
-
-  doc.fontSize(20).text('Relatório de Jogos - API PSW2', { align: 'center' });
-  doc.moveDown();
-  
-  jogos.forEach((jogo, index) => {
-    doc.fontSize(12).text(`${index + 1}. Código: ${jogo.id} | Título: ${jogo.titulo} | Gênero: ${jogo.genero} (${jogo.ano})`);
-  });
-
-  doc.end();
+  const htmlPdf = `
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <title>Relatório de Jogos - PSW2</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+            h1 { text-align: center; color: #4f46e5; }
+            table { width: 100%; border-collapse: collapse; margin-top: 30px; }
+            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+            th { background-color: #4f46e5; color: white; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+            .footer { margin-top: 40px; text-align: center; font-size: 12px; color: #777; }
+        </style>
+    </head>
+    <body onload="window.print()">
+        <h1>Relatório de Jogos - API PSW2</h1>
+        <p><strong>Instituição:</strong> IFCE Campus Crato | <strong>Disciplina:</strong> PSW2</p>
+        <hr>
+        <table>
+            <thead>
+                <tr>
+                    <th>Código ID</th>
+                    <th>Título do Jogo</th>
+                    <th>Gênero</th>
+                    <th>Ano</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${jogos.map(j => `
+                    <tr>
+                        <td>${j.id}</td>
+                        <td>${j.titulo}</td>
+                        <td>${j.genero}</td>
+                        <td>${j.ano}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+        <div class="footer">
+            <p>Gerado automaticamente pela API de Gerenciador de Jogos Pessoais (Requisito H)</p>
+        </div>
+    </body>
+    </html>
+  `;
+  res.send(htmlPdf);
 });
 
 // Requisito D: Rota GET para pesquisar um item pelo código (ID)
