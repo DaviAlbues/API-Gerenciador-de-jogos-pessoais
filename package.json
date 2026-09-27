@@ -1,15 +1,17 @@
 {
-  "name": "gerenciador-de-jogos-da-biblioteca-pessoal",
+  "name": "biblioteca-pessoal-de-jogos",
   "version": "1.0.0",
-  "description": "",
+  "private": true,
+  "description": "API de jogos em memória para a disciplina de Web 2",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "express": "^5.2.1",
     "pdfkit": "^0.20.2"
