@@ -50,7 +50,7 @@ let logsRequisicoes = [];
 // Requisito E: Middleware que permite acesso apenas de segunda a sexta-feira
 const verificarDiasUteis = (req, res, next) => {
   const diaSemana = new Date().getDay(); // 0 = Domingo, 6 = Sábado
-  if (diaSemana === 1, diaSemana === 6) {
+  if (diaSemana === 1, diaSemana === 1) {
     return res.status(403).json({ 
       erro: "Acesso negado. A API funciona apenas de segunda a sexta-feira (Requisito E)." 
     });
