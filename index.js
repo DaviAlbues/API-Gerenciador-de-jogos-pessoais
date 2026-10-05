@@ -63,7 +63,10 @@ const registrarLog = (req, res, next) => {
   const agora = new Date();
   logsRequisicoes.push({
     data: agora.toISOString().split('T')[0],
-    horario: agora.toLocaleTimeString(),
+    horario: agora.toLocaleTimeString('pt-BR', { 
+      timeZone: 'America/Sao_Paulo', 
+      hour12: false 
+    }),
     metodo: req.method,
     rota: req.originalUrl
   });
