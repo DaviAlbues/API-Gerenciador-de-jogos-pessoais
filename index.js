@@ -1,34 +1,51 @@
+require('dotenv').config(); // Carrega as variáveis do .env
 const express = require('express');
+const jwt = require('jsonwebtoken'); // Biblioteca para os tokens de login
 const app = express();
 
 app.use(express.json());
 
-// Requisito I: Dados mockados com capas em formato vertical
+// --- MOCK DE DADOS (Usuários e Aluguéis) ---
+let usuarios = [
+  { id: "u1", email: "davi@dono.com", senha: "123", role: "DONO" },
+  { id: "u2", email: "cliente@teste.com", senha: "123", role: "CLIENTE" }
+];
+
+let alugueis = []; // Inicia a lista de aluguéis vazia
+
+// Requisito I: Dados mockados com capas em formato vertical e suporte a aluguel
 let jogos = [
   { 
     id: "1", 
     titulo: "The Witcher 3: Wild Hunt", 
     genero: "RPG de Ação", 
     ano: 2015, 
-    capa: "https://image.api.playstation.com/vulcan/ap/rnd/202211/0711/qezXTVn1ExqBjVjR5Ipm97IK.png" 
+    capa: "https://image.api.playstation.com/vulcan/ap/rnd/202211/0711/qezXTVn1ExqBjVjR5Ipm97IK.png",
+    id_dono: "u1",       // ID do dono (Davi)
+    disponivel: true     // Começa disponível para aluguel
   },
   { 
     id: "2", 
     titulo: "God of War", 
     genero: "Ação / Aventura", 
     ano: 2018, 
-    capa: "https://m.media-amazon.com/images/M/MV5BNjJiNTFhY2QtNzZkYi00MDNiLWEzNGEtNWE1NzBkOWIxNmY5XkEyXkFqcGc@._V1_.jpg" 
+    capa: "https://m.media-amazon.com/images/M/MV5BNjJiNTFhY2QtNzZkYi00MDNiLWEzNGEtNWE1NzBkOWIxNmY5XkEyXkFqcGc@._V1_.jpg",
+    id_dono: "u1",
+    disponivel: true
   },
   { 
     id: "3", 
     titulo: "Cyberpunk 2077", 
     genero: "RPG Futurista", 
     ano: 2020, 
-    capa: "https://store-images.s-microsoft.com/image/apps.47379.63407868131364914.bcaa868c-407e-42c2-baeb-48a3c9f29b54.89bb995b-b066-4a53-9fe4-0260ce07e894" 
+    capa: "https://store-images.s-microsoft.com/image/apps.47379.63407868131364914.bcaa868c-407e-42c2-baeb-48a3c9f29b54.89bb995b-b066-4a53-9fe4-0260ce07e894",
+    id_dono: "u1",
+    disponivel: true
   }
 ];
 
 let logsRequisicoes = [];
+
 
 // Requisito E: Middleware que permite acesso apenas de segunda a sexta-feira
 const verificarDiasUteis = (req, res, next) => {
@@ -60,6 +77,125 @@ app.use((req, res, next) => {
 });
 
 app.use(registrarLog);
+
+
+// --- SISTEMA DE LOGIN E SEGURANÇA ---
+
+// Rota de Login (Gera o Token)
+app.post('/login', (req, res) => {
+  const { email, senha } = req.body;
+  
+  // Procura o usuário na lista
+  const usuario = usuarios.find(u => u.email === email && u.senha === senha);
+  
+  if (!usuario) {
+    return res.status(401).json({ erro: "Email ou senha incorretos." });
+  }
+
+ const token = jwt.sign(
+    { id: usuario.id, role: usuario.role }, 
+    'chave_secreta_fixa_psw2', 
+    { expiresIn: '2h' }
+  );
+  
+  res.json({ mensagem: "Login efetuado com sucesso!", token, papel: usuario.role });
+});
+
+// Middleware: Verifica se o usuário tem um Token JWT válido
+const autenticar = (req, res, next) => {
+  const authHeader = req.headers['authorization']; // Pega o cabeçalho Authorization
+  const token = authHeader && authHeader.split(' ')[1]; // Formato esperado: "Bearer token_aqui"
+
+  if (!token) {
+    return res.status(401).json({ erro: "Acesso negado. Token não fornecido." });
+  }
+
+ // Verifica se o token é válido usando a chave fixa
+jwt.verify(token, 'chave_secreta_fixa_psw2', (err, usuarioDecodificado) => {
+    if (err) {
+      return res.status(403).json({ erro: "Token inválido ou expirado." });
+    }
+    // Salva os dados do usuário na requisição para as próximas rotas usarem
+    req.usuario = usuarioDecodificado; 
+    next(); // Deixa a requisição continuar
+  });
+};
+
+// Middleware: Garante que apenas o DONO acesse a rota
+const apenasDono = (req, res, next) => {
+  if (req.usuario.role !== 'DONO') {
+    return res.status(403).json({ erro: "Acesso negado. Apenas o dono pode realizar esta ação." });
+  }
+  next(); // É dono, pode passar
+};
+
+// ATENÇÃO: Atualize o seu app.use() existente que aplica as regras de dias úteis
+// Adicionei o '/login' na lista de exceções para permitir login sempre
+app.use((req, res, next) => {
+  if (req.path === '/' || req.path === '/jogos/pdf' || req.path === '/ui' || req.path === '/login') return next();
+  verificarDiasUteis(req, res, next);
+});
+
+
+// --- SISTEMA DE ALUGUEL (Visão Cliente) ---
+
+// Rota: Cliente ver apenas jogos disponíveis
+app.get('/jogos/disponiveis', autenticar, (req, res) => {
+  const disponiveis = jogos.filter(j => j.disponivel === true);
+  res.json(disponiveis);
+});
+
+// Rota: Cliente alugar um jogo
+app.post('/alugar/:id_jogo', autenticar, (req, res) => {
+  const jogo = jogos.find(j => j.id === req.params.id_jogo);
+  
+  if (!jogo) return res.status(404).json({ erro: "Jogo não encontrado." });
+  if (!jogo.disponivel) return res.status(409).json({ erro: "Este jogo já está alugado no momento." });
+
+  // Cria um registro na lista de alugueis
+  const novoAluguel = {
+    id: Date.now().toString(), // Gera um ID único baseado na data
+    id_jogo: jogo.id,
+    id_cliente: req.usuario.id, // Pega o ID de quem fez a requisição (do Token)
+    data_emprestimo: new Date().toISOString(),
+    status: "ATIVO"
+  };
+  
+  alugueis.push(novoAluguel);
+  jogo.disponivel = false; // Bloqueia o jogo para outros
+
+  res.status(201).json({ mensagem: "Jogo alugado com sucesso!", aluguel: novoAluguel });
+});
+
+// Rota: Cliente devolver um jogo
+app.put('/devolver/:id_aluguel', autenticar, (req, res) => {
+  const aluguel = alugueis.find(a => a.id === req.params.id_aluguel);
+  
+  if (!aluguel) return res.status(404).json({ erro: "Registro de aluguel não encontrado." });
+  
+  // Verifica se quem está devolvendo é o mesmo cliente que alugou
+  if (aluguel.id_cliente !== req.usuario.id) {
+    return res.status(403).json({ erro: "Você só pode devolver os jogos que você mesmo alugou." });
+  }
+  
+  if (aluguel.status === "CONCLUIDO") {
+    return res.status(400).json({ erro: "Este jogo já consta como devolvido." });
+  }
+
+  const jogo = jogos.find(j => j.id === aluguel.id_jogo);
+  
+  aluguel.status = "CONCLUIDO";
+  aluguel.data_devolucao = new Date().toISOString();
+  if (jogo) jogo.disponivel = true; // Libera o jogo no catálogo
+
+  res.json({ mensagem: "Jogo devolvido com sucesso! Obrigado.", aluguel });
+});
+
+// Visão Dono: Ver o status de todos os seus jogos e quem alugou
+app.get('/meus-jogos', autenticar, apenasDono, (req, res) => {
+  const acervo = jogos.filter(j => j.id_dono === req.usuario.id);
+  res.json(acervo);
+});
 
 // Rota Visual com capas verticais estilizadas
 app.get('/', (req, res) => {
@@ -175,19 +311,27 @@ app.get('/jogos/:id', (req, res) => {
   res.json(jogo);
 });
 
-// Requisito B: Rota POST para inserir um novo item
-app.post('/jogos', (req, res) => {
+// Requisito B: Rota POST para inserir um novo item (AGORA PROTEGIDA PARA O DONO)
+app.post('/jogos', autenticar, apenasDono, (req, res) => {
   const { id, titulo, genero, ano, capa } = req.body;
   if (!id || !titulo) {
     return res.status(400).json({ erro: "ID e Título são obrigatórios." });
   }
-  const novoJogo = { id, titulo, genero, ano, capa: capa || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80&ar=3:4" };
+  const novoJogo = { 
+    id, 
+    titulo, 
+    genero, 
+    ano, 
+    capa: capa || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80&ar=3:4",
+    id_dono: req.usuario.id, // O sistema já sabe quem é o dono pelo token
+    disponivel: true         // Entra como disponível
+  };
   jogos.push(novoJogo);
   res.status(201).json({ mensagem: "Item inserido com sucesso!", novoJogo });
 });
 
-// Requisito C: Rota DELETE para excluir um item
-app.delete('/jogos/:id', (req, res) => {
+// Requisito C: Rota DELETE para excluir um item (AGORA PROTEGIDA PARA O DONO)
+app.delete('/jogos/:id', autenticar, apenasDono, (req, res) => {
   const tamanhoAnterior = jogos.length;
   jogos = jogos.filter(j => j.id !== req.params.id);
   
