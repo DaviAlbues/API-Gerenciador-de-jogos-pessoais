@@ -317,18 +317,27 @@ app.get('/jogos/:id', (req, res) => {
 // Requisito B: Rota POST para inserir um novo item (AGORA PROTEGIDA PARA O DONO)
 app.post('/jogos', autenticar, apenasDono, (req, res) => {
   const { id, titulo, genero, ano, capa } = req.body;
+  
   if (!id || !titulo) {
     return res.status(400).json({ erro: "ID e Título são obrigatórios." });
   }
+
+  // NOVO: Verifica se já existe um jogo cadastrado com este ID
+  const jogoExistente = jogos.find(j => j.id === id);
+  if (jogoExistente) {
+    return res.status(409).json({ erro: "Já existe um jogo cadastrado com este ID." });
+  }
+
   const novoJogo = { 
     id, 
     titulo, 
     genero, 
     ano, 
     capa: capa || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80&ar=3:4",
-    id_dono: req.usuario.id, // O sistema já sabe quem é o dono pelo token
-    disponivel: true         // Entra como disponível
+    id_dono: req.usuario.id,
+    disponivel: true
   };
+  
   jogos.push(novoJogo);
   res.status(201).json({ mensagem: "Item inserido com sucesso!", novoJogo });
 });
