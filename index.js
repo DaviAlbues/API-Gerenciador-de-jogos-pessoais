@@ -236,7 +236,10 @@ app.get('/', (req, res) => {
                             </div>
                             <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs text-gray-500">
                                 <span>ID: ${jogo.id}</span>
-                                <span class="text-emerald-400 font-medium">Disponível</span>
+                                ${jogo.disponivel 
+                                ? '<span class="text-emerald-400 font-medium">Disponível</span>' 
+                                : '<span class="text-red-400 font-medium">Alugado</span>'
+                                }
                             </div>
                         </div>
                     </div>
