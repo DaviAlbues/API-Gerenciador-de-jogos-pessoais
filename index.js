@@ -1,373 +1,204 @@
-require('dotenv').config(); // Carrega as variáveis do .env
+require('dotenv').config();
 const express = require('express');
-const jwt = require('jsonwebtoken'); // Biblioteca para os tokens de login
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const cloudinary = require('cloudinary').v2;
+const nodemailer = require('nodemailer');
+const { randomInt } = require('crypto');
+
 const app = express();
+app.use(express.json({ limit: '2mb' }));
 
-app.use(express.json());
-
-// --- MOCK DE DADOS (Usuários e Aluguéis) ---
-let usuarios = [
-  { id: "u1", email: "davi@dono.com", senha: "123", role: "DONO" },
-  { id: "u2", email: "cliente@teste.com", senha: "123", role: "CLIENTE" }
-];
-
-let alugueis = []; // Inicia a lista de aluguéis vazia
-
-// Requisito I: Dados mockados com capas em formato vertical e suporte a aluguel
-let jogos = [
-  { 
-    id: "1", 
-    titulo: "The Witcher 3: Wild Hunt", 
-    genero: "RPG de Ação", 
-    ano: 2015, 
-    capa: "https://image.api.playstation.com/vulcan/ap/rnd/202211/0711/qezXTVn1ExqBjVjR5Ipm97IK.png",
-    id_dono: "u1",       // ID do dono (Davi)
-    disponivel: true     // Começa disponível para aluguel
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map(v => v.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origem não autorizada pelo CORS.'));
   },
-  { 
-    id: "2", 
-    titulo: "God of War", 
-    genero: "Ação / Aventura", 
-    ano: 2018, 
-    capa: "https://m.media-amazon.com/images/M/MV5BNjJiNTFhY2QtNzZkYi00MDNiLWEzNGEtNWE1NzBkOWIxNmY5XkEyXkFqcGc@._V1_.jpg",
-    id_dono: "u1",
-    disponivel: true
-  },
-  { 
-    id: "3", 
-    titulo: "Cyberpunk 2077", 
-    genero: "RPG Futurista", 
-    ano: 2020, 
-    capa: "https://store-images.s-microsoft.com/image/apps.47379.63407868131364914.bcaa868c-407e-42c2-baeb-48a3c9f29b54.89bb995b-b066-4a53-9fe4-0260ce07e894",
-    id_dono: "u1",
-    disponivel: true
-  }
-];
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
-let logsRequisicoes = [];
-
-
-// Requisito E: Middleware que permite acesso apenas de segunda a sexta-feira
-const verificarDiasUteis = (req, res, next) => {
-  const diaSemana = new Date().getDay(); // 0 = Domingo, 6 = Sábado
-  if (diaSemana === 0 , diaSemana === 6) {
-    return res.status(403).json({ 
-      erro: "Acesso negado. A API funciona apenas de segunda a sexta-feira (Requisito E)." 
-    });
-  }
-  next();
-};
-
-// Requisito F: Middleware que registra o horário e a rota de cada requisição
-const registrarLog = (req, res, next) => {
-  const agora = new Date();
-  logsRequisicoes.push({
-    data: agora.toISOString().split('T')[0],
-    horario: agora.toLocaleTimeString('pt-BR', { 
-      timeZone: 'America/Sao_Paulo', 
-      hour12: false 
-    }),
-    metodo: req.method,
-    rota: req.originalUrl
-  });
-  next();
-};
-
-// Aplicando os middlewares globais 
-app.use((req, res, next) => {
-  if (req.path === '/' || req.path === '/jogos/pdf' || req.path === '/ui') return next();
-  verificarDiasUteis(req, res, next);
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-app.use(registrarLog);
+const userSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  passwordHash: { type: String, required: true },
+  role: { type: String, enum: ['DONO', 'CLIENTE'], default: 'CLIENTE' },
+  otpHash: String,
+  otpExpiresAt: Date
+}, { timestamps: true });
+const gameSchema = new mongoose.Schema({
+  titulo: { type: String, required: true, trim: true },
+  genero: String, ano: Number, capa: String, imagePublicId: String,
+  owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  disponivel: { type: Boolean, default: true }
+}, { timestamps: true });
+const rentalSchema = new mongoose.Schema({
+  game: { type: mongoose.Schema.Types.ObjectId, ref: 'Game', required: true },
+  customer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  status: { type: String, enum: ['ATIVO', 'CONCLUIDO'], default: 'ATIVO' },
+  rentedAt: { type: Date, default: Date.now }, returnedAt: Date
+}, { timestamps: true });
+const logSchema = new mongoose.Schema({
+  date: { type: String, required: true }, time: { type: String, required: true },
+  method: String, route: String, status: Number
+}, { timestamps: true });
 
+const User = mongoose.models.User || mongoose.model('User', userSchema);
+const Game = mongoose.models.Game || mongoose.model('Game', gameSchema);
+const Rental = mongoose.models.Rental || mongoose.model('Rental', rentalSchema);
+const RequestLog = mongoose.models.RequestLog || mongoose.model('RequestLog', logSchema);
+const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// --- SISTEMA DE LOGIN E SEGURANÇA ---
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    const now = new Date();
+    RequestLog.create({
+      date: now.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }),
+      time: now.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour12: false }),
+      method: req.method, route: req.originalUrl, status: res.statusCode
+    }).catch(() => {});
+  });
+  next();
+});
 
-// Rota de Login (Gera o Token)
-app.post('/login', (req, res) => {
+const signToken = user => jwt.sign({ sub: user._id.toString(), role: user.role }, process.env.JWT_SECRET, { expiresIn: '2h' });
+const authenticate = asyncRoute(async (req, res, next) => {
+  const token = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null;
+  if (!token) return res.status(401).json({ erro: 'Token não fornecido.' });
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(payload.sub);
+    if (!user) return res.status(401).json({ erro: 'Usuário não encontrado.' });
+    req.user = user;
+    next();
+  } catch {
+    return res.status(401).json({ erro: 'Token inválido ou expirado.' });
+  }
+});
+const ownerOnly = (req, res, next) => req.user.role === 'DONO'
+  ? next() : res.status(403).json({ erro: 'Apenas o dono pode executar esta ação.' });
+const transporter = () => nodemailer.createTransport({
+  host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587),
+  secure: process.env.SMTP_SECURE === 'true',
+  auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
+});
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.post('/auth/register', asyncRoute(async (req, res) => {
+  const { email, senha, role } = req.body;
+  if (!email || !senha || senha.length < 8) return res.status(400).json({ erro: 'Informe email e senha com pelo menos 8 caracteres.' });
+  if (role && !['DONO', 'CLIENTE'].includes(role)) return res.status(400).json({ erro: 'Papel inválido.' });
+  if (await User.findOne({ email: email.toLowerCase() })) return res.status(409).json({ erro: 'Email já cadastrado.' });
+  const user = await User.create({ email, passwordHash: await bcrypt.hash(senha, 12), role: role || 'CLIENTE' });
+  res.status(201).json({ id: user._id, email: user.email, role: user.role });
+}));
+
+app.post('/login', asyncRoute(async (req, res) => {
   const { email, senha } = req.body;
-  
-  // Procura o usuário na lista
-  const usuario = usuarios.find(u => u.email === email && u.senha === senha);
-  
-  if (!usuario) {
-    return res.status(401).json({ erro: "Email ou senha incorretos." });
-  }
+  const user = await User.findOne({ email: String(email || '').toLowerCase() });
+  if (!user || !(await bcrypt.compare(String(senha || ''), user.passwordHash))) return res.status(401).json({ erro: 'Email ou senha incorretos.' });
+  if (!process.env.SMTP_HOST) return res.status(503).json({ erro: '2FA por email não configurado no servidor.' });
+  const otp = String(randomInt(100000, 1000000));
+  user.otpHash = await bcrypt.hash(otp, 10);
+  user.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await user.save();
+  await transporter().sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: user.email, subject: 'Código de verificação', text: `Seu código de verificação é ${otp}. Ele expira em 10 minutos.` });
+  res.json({ mensagem: 'Código de verificação enviado para o email cadastrado.' });
+}));
+app.post('/login/verify', asyncRoute(async (req, res) => {
+  const { email, codigo } = req.body;
+  const user = await User.findOne({ email: String(email || '').toLowerCase() });
+  if (!user || !user.otpHash || !user.otpExpiresAt || user.otpExpiresAt < new Date() || !(await bcrypt.compare(String(codigo || ''), user.otpHash))) return res.status(401).json({ erro: 'Código inválido ou expirado.' });
+  user.otpHash = undefined; user.otpExpiresAt = undefined; await user.save();
+  res.json({ mensagem: 'Login efetuado com sucesso.', token: signToken(user), papel: user.role });
+}));
 
- const token = jwt.sign(
-    { id: usuario.id, role: usuario.role }, 
-    'chave_secreta_fixa_psw2', 
-    { expiresIn: '2h' }
-  );
-  
-  res.json({ mensagem: "Login efetuado com sucesso!", token, papel: usuario.role });
+app.get('/jogos', asyncRoute(async (req, res) => res.json(await Game.find().populate('owner', 'email'))));
+app.get('/jogos/export.csv', authenticate, ownerOnly, asyncRoute(async (req, res) => {
+  const games = await Game.find().populate('owner', 'email').lean();
+  const headers = ['id', 'titulo', 'genero', 'ano', 'capa', 'disponivel', 'ownerEmail'];
+  const quote = value => '"' + String(value ?? '').replace(/"/g, '""') + '"';
+  const rows = games.map(g => [g._id, g.titulo, g.genero, g.ano, g.capa, g.disponivel, g.owner?.email]);
+  const csv = [headers, ...rows].map(row => row.map(quote).join(',')).join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="jogos.csv"');
+  res.send('\uFEFF' + csv);
+}));
+app.get('/jogos/:id', asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ erro: 'Jogo não encontrado.' });
+  const game = await Game.findById(req.params.id).populate('owner', 'email');
+  if (!game) return res.status(404).json({ erro: 'Jogo não encontrado.' });
+  res.json(game);
+}));
+app.post('/jogos', authenticate, ownerOnly, asyncRoute(async (req, res) => {
+  const { titulo, genero, ano, capa } = req.body;
+  if (!titulo || !String(titulo).trim()) return res.status(400).json({ erro: 'Título é obrigatório.' });
+  res.status(201).json(await Game.create({ titulo, genero, ano, capa, owner: req.user._id }));
+}));
+app.post('/jogos/upload-capa', authenticate, ownerOnly, asyncRoute(async (req, res) => {
+  const { image } = req.body;
+  if (!image || !/^data:image\/(png|jpeg|webp);base64,/.test(image)) return res.status(400).json({ erro: 'Envie uma imagem PNG, JPEG ou WEBP em base64.' });
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) return res.status(503).json({ erro: 'Armazenamento de imagens não configurado.' });
+  const result = await cloudinary.uploader.upload(image, { folder: 'biblioteca-jogos/capas', resource_type: 'image' });
+  res.status(201).json({ url: result.secure_url, publicId: result.public_id });
+}));
+app.delete('/jogos/:id', authenticate, ownerOnly, asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ erro: 'Jogo não encontrado.' });
+  const game = await Game.findById(req.params.id);
+  if (!game) return res.status(404).json({ erro: 'Jogo não encontrado.' });
+  if (game.imagePublicId && process.env.CLOUDINARY_API_SECRET) await cloudinary.uploader.destroy(game.imagePublicId);
+  await game.deleteOne();
+  res.json({ mensagem: 'Jogo excluído com sucesso.' });
+}));
+app.get('/jogos/disponiveis', authenticate, asyncRoute(async (req, res) => res.json(await Game.find({ disponivel: true }))));
+app.post('/alugar/:id_jogo', authenticate, asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id_jogo)) return res.status(404).json({ erro: 'Jogo não encontrado.' });
+  const game = await Game.findOneAndUpdate({ _id: req.params.id_jogo, disponivel: true }, { disponivel: false }, { new: true });
+  if (!game) return res.status(409).json({ erro: 'Jogo inexistente ou indisponível.' });
+  const rental = await Rental.create({ game: game._id, customer: req.user._id });
+  res.status(201).json({ mensagem: 'Jogo alugado com sucesso.', aluguel: rental });
+}));
+app.put('/devolver/:id_aluguel', authenticate, asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id_aluguel)) return res.status(404).json({ erro: 'Aluguel não encontrado.' });
+  const rental = await Rental.findOne({ _id: req.params.id_aluguel, customer: req.user._id });
+  if (!rental) return res.status(404).json({ erro: 'Aluguel não encontrado para este usuário.' });
+  if (rental.status === 'CONCLUIDO') return res.status(400).json({ erro: 'Aluguel já devolvido.' });
+  rental.status = 'CONCLUIDO'; rental.returnedAt = new Date(); await rental.save();
+  await Game.findByIdAndUpdate(rental.game, { disponivel: true });
+  res.json({ mensagem: 'Jogo devolvido com sucesso.', aluguel: rental });
+}));
+app.get('/meus-jogos', authenticate, ownerOnly, asyncRoute(async (req, res) => res.json(await Game.find({ owner: req.user._id }))));
+app.get('/logs', authenticate, ownerOnly, asyncRoute(async (req, res) => {
+  const { data } = req.query;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data || '')) return res.status(400).json({ erro: 'Informe data=AAAA-MM-DD.' });
+  res.json(await RequestLog.find({ date: data }).sort({ createdAt: 1 }));
+}));
+app.get('/jogos/pdf', asyncRoute(async (req, res) => {
+  const games = await Game.find().lean();
+  const PDFDocument = require('pdfkit'); const doc = new PDFDocument();
+  res.setHeader('Content-Type', 'application/pdf'); res.setHeader('Content-Disposition', 'attachment; filename="jogos.pdf"');
+  doc.pipe(res); doc.fontSize(18).text('Relatório de Jogos', { align: 'center' }); doc.moveDown();
+  games.forEach(g => doc.fontSize(11).text(`${g.titulo} | ${g.genero || '-'} | ${g.ano || '-'} | ${g.disponivel ? 'Disponível' : 'Alugado'}`));
+  doc.end();
+}));
+app.use((err, req, res, next) => {
+  if (err.message?.includes('CORS')) return res.status(403).json({ erro: 'Origem não permitida.' });
+  if (err.code === 11000) return res.status(409).json({ erro: 'Registro duplicado.' });
+  console.error(err); res.status(500).json({ erro: 'Erro interno do servidor.' });
 });
-
-// Middleware: Verifica se o usuário tem um Token JWT válido
-const autenticar = (req, res, next) => {
-  const authHeader = req.headers['authorization']; // Pega o cabeçalho Authorization
-  const token = authHeader && authHeader.split(' ')[1]; // Formato esperado: "Bearer token_aqui"
-
-  if (!token) {
-    return res.status(401).json({ erro: "Acesso negado. Token não fornecido." });
-  }
-
- // Verifica se o token é válido usando a chave fixa
-jwt.verify(token, 'chave_secreta_fixa_psw2', (err, usuarioDecodificado) => {
-    if (err) {
-      return res.status(403).json({ erro: "Token inválido ou expirado." });
-    }
-    // Salva os dados do usuário na requisição para as próximas rotas usarem
-    req.usuario = usuarioDecodificado; 
-    next(); // Deixa a requisição continuar
-  });
-};
-
-// Middleware: Garante que apenas o DONO acesse a rota
-const apenasDono = (req, res, next) => {
-  if (req.usuario.role !== 'DONO') {
-    return res.status(403).json({ erro: "Acesso negado. Apenas o dono pode realizar esta ação." });
-  }
-  next(); // É dono, pode passar
-};
-
-// ATENÇÃO: Atualize o seu app.use() existente que aplica as regras de dias úteis
-// Adicionei o '/login' na lista de exceções para permitir login sempre
-app.use((req, res, next) => {
-  if (req.path === '/' || req.path === '/jogos/pdf' || req.path === '/ui' || req.path === '/login') return next();
-  verificarDiasUteis(req, res, next);
-});
-
-
-// --- SISTEMA DE ALUGUEL (Visão Cliente) ---
-
-// Rota: Cliente ver apenas jogos disponíveis
-app.get('/jogos/disponiveis', autenticar, (req, res) => {
-  const disponiveis = jogos.filter(j => j.disponivel === true);
-  res.json(disponiveis);
-});
-
-// Rota: Cliente alugar um jogo
-app.post('/alugar/:id_jogo', autenticar, (req, res) => {
-  const jogo = jogos.find(j => j.id === req.params.id_jogo);
-  
-  if (!jogo) return res.status(404).json({ erro: "Jogo não encontrado." });
-  if (!jogo.disponivel) return res.status(409).json({ erro: "Este jogo já está alugado no momento." });
-
-  // Cria um registro na lista de alugueis
-  const novoAluguel = {
-    id: Date.now().toString(), // Gera um ID único baseado na data
-    id_jogo: jogo.id,
-    id_cliente: req.usuario.id, // Pega o ID de quem fez a requisição (do Token)
-    data_emprestimo: new Date().toISOString(),
-    status: "ATIVO"
-  };
-  
-  alugueis.push(novoAluguel);
-  jogo.disponivel = false; // Bloqueia o jogo para outros
-
-  res.status(201).json({ mensagem: "Jogo alugado com sucesso!", aluguel: novoAluguel });
-});
-
-// Rota: Cliente devolver um jogo
-app.put('/devolver/:id_aluguel', autenticar, (req, res) => {
-  const aluguel = alugueis.find(a => a.id === req.params.id_aluguel);
-  
-  if (!aluguel) return res.status(404).json({ erro: "Registro de aluguel não encontrado." });
-  
-  // Verifica se quem está devolvendo é o mesmo cliente que alugou
-  if (aluguel.id_cliente !== req.usuario.id) {
-    return res.status(403).json({ erro: "Você só pode devolver os jogos que você mesmo alugou." });
-  }
-  
-  if (aluguel.status === "CONCLUIDO") {
-    return res.status(400).json({ erro: "Este jogo já consta como devolvido." });
-  }
-
-  const jogo = jogos.find(j => j.id === aluguel.id_jogo);
-  
-  aluguel.status = "CONCLUIDO";
-  aluguel.data_devolucao = new Date().toISOString();
-  if (jogo) jogo.disponivel = true; // Libera o jogo no catálogo
-
-  res.json({ mensagem: "Jogo devolvido com sucesso! Obrigado.", aluguel });
-});
-
-// Visão Dono: Ver o status de todos os seus jogos e quem alugou
-app.get('/meus-jogos', autenticar, apenasDono, (req, res) => {
-  const acervo = jogos.filter(j => j.id_dono === req.usuario.id);
-  res.json(acervo);
-});
-
-// Rota Visual com capas verticais estilizadas
-app.get('/', (req, res) => {
-  const html = `
-    <!DOCTYPE html>
-    <html lang="pt-BR">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Biblioteca Pessoal de Jogos - PSW2</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-    </head>
-    <body class="bg-gray-950 text-white min-h-screen font-sans">
-        <div class="container mx-auto px-4 py-12">
-            <header class="text-center mb-12">
-                <h1 class="text-4xl font-extrabold text-indigo-400 mb-3 tracking-wide">Gerenciador de Jogos</h1>
-                <div class="mt-6 flex justify-center gap-4">
-                    <a href="/jogos" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-lg">Ver JSON da API</a>
-                    <a href="/jogos/pdf" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-lg">Gerar Relatório PDF (Requisito H)</a>
-                </div>
-            </header>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8 max-w-6xl mx-auto">
-                ${jogos.map(jogo => `
-                    <div class="bg-gray-900 rounded-2xl overflow-hidden shadow-2xl border border-gray-800 hover:border-indigo-500 hover:scale-105 transition duration-300 flex flex-col">
-                        <!-- Capa em formato vertical (Proporção 3:4 estilo Xbox/Store) -->
-                        <div class="aspect-[3/4] w-full overflow-hidden bg-gray-800 relative">
-                            <img src="${jogo.capa}" alt="${jogo.titulo}" class="w-full h-full object-cover">
-                        </div>
-                        <div class="p-5 flex flex-col flex-grow justify-between">
-                            <div>
-                                <span class="text-[10px] font-bold uppercase tracking-widest text-indigo-400 bg-indigo-950/80 px-2.5 py-1 rounded-md border border-indigo-800/50">${jogo.genero}</span>
-                                <h3 class="text-lg font-bold mt-3 mb-1 text-white leading-snug">${jogo.titulo}</h3>
-                                <p class="text-gray-400 text-sm">Lançamento: <span class="text-gray-200 font-semibold">${jogo.ano}</span></p>
-                            </div>
-                            <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs text-gray-500">
-                                <span>ID: ${jogo.id}</span>
-                                ${jogo.disponivel 
-                                ? '<span class="text-emerald-400 font-medium">Disponível</span>' 
-                                : '<span class="text-red-400 font-medium">Alugado</span>'
-                                }
-                            </div>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-    </body>
-    </html>
-  `;
-  res.send(html);
-});
-
-// Requisito A: Rota GET para obter a lista de itens em JSON
-app.get('/jogos', (req, res) => {
-  res.json(jogos);
-});
-
-// Requisito H: Rota GET que gera um relatório otimizado em PDF 
-app.get('/jogos/pdf', (req, res) => {
-  const htmlPdf = `
-    <!DOCTYPE html>
-    <html lang="pt-BR">
-    <head>
-        <meta charset="UTF-8">
-        <title>Relatório de Jogos - PSW2</title>
-        <style>
-            body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
-            h1 { text-align: center; color: #4f46e5; }
-            table { width: 100%; border-collapse: collapse; margin-top: 30px; }
-            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-            th { background-color: #4f46e5; color: white; }
-            tr:nth-child(even) { background-color: #f9f9f9; }
-            .footer { margin-top: 40px; text-align: center; font-size: 12px; color: #777; }
-        </style>
-    </head>
-    <body onload="window.print()">
-        <h1>Relatório de Jogos - API PSW2</h1>
-        <p><strong>Instituição:</strong> IFCE Campus Crato | <strong>Disciplina:</strong> PSW2</p>
-        <hr>
-        <table>
-            <thead>
-                <tr>
-                    <th>Código ID</th>
-                    <th>Título do Jogo</th>
-                    <th>Gênero</th>
-                    <th>Ano</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${jogos.map(j => `
-                    <tr>
-                        <td>${j.id}</td>
-                        <td>${j.titulo}</td>
-                        <td>${j.genero}</td>
-                        <td>${j.ano}</td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-        <div class="footer">
-            <p>Gerado automaticamente pela API de Gerenciador de Jogos Pessoais (Requisito H)</p>
-        </div>
-    </body>
-    </html>
-  `;
-  res.send(htmlPdf);
-});
-
-// Requisito D: Rota GET para pesquisar um item pelo código (ID)
-app.get('/jogos/:id', (req, res) => {
-  const jogo = jogos.find(j => j.id === req.params.id);
-  if (!jogo) {
-    return res.status(404).json({ erro: "Item não encontrado com este código." });
-  }
-  res.json(jogo);
-});
-
-// Requisito B: Rota POST para inserir um novo item (AGORA PROTEGIDA PARA O DONO)
-app.post('/jogos', autenticar, apenasDono, (req, res) => {
-  // Adicionamos o campo 'capa' na desestruturação do req.body
-  const { id, titulo, genero, ano, capa } = req.body;
-  
-  if (!id || !titulo) {
-    return res.status(400).json({ erro: "ID e Título são obrigatórios." });
-  }
-
-  const jogoExistente = jogos.find(j => j.id === id);
-  if (jogoExistente) {
-    return res.status(409).json({ erro: "Já existe um jogo cadastrado com este ID." });
-  }
-
-  const novoJogo = { 
-    id, 
-    titulo, 
-    genero, 
-    ano, 
-    // Se o usuário mandar a URL da capa, usamos ela. Se não, usamos uma imagem padrão genérica
-    capa: capa || "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80&ar=3:4",
-    id_dono: req.usuario.id,
-    disponivel: true
-  };
-  
-  jogos.push(novoJogo);
-  res.status(201).json({ mensagem: "Item inserido com sucesso!", novoJogo });
-});
-
-// Requisito C: Rota DELETE para excluir um item (AGORA PROTEGIDA PARA O DONO)
-app.delete('/jogos/:id', autenticar, apenasDono, (req, res) => {
-  const tamanhoAnterior = jogos.length;
-  jogos = jogos.filter(j => j.id !== req.params.id);
-  
-  if (jogos.length === tamanhoAnterior) {
-    return res.status(404).json({ erro: "Item não encontrado para exclusão." });
-  }
-  res.status(200).json({ mensagem: "Item excluído com sucesso." });
-});
-
-// Requisito G: Rota GET que retorna os registros de requisição em uma data informada
-app.get('/logs', (req, res) => {
-  const { data } = req.query; 
-  if (!data) {
-    return res.status(400).json({ erro: "Informe a data no parâmetro ?data=AAAA-MM-DD" });
-  }
-  const logsFiltrados = logsRequisicoes.filter(log => log.data === data);
-  res.json(logsFiltrados);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor a executar na porta ${PORT}`);
-});
+async function connectDatabase() {
+  if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI não definida.');
+  await mongoose.connect(process.env.MONGODB_URI);
+}
+if (require.main === module) connectDatabase().then(() => {
+  const port = process.env.PORT || 3000; app.listen(port, () => console.log(`API disponível na porta ${port}`));
+}).catch(error => { console.error('Falha ao conectar ao MongoDB:', error.message); process.exit(1); });
+module.exports = { app, connectDatabase, models: { User, Game, Rental, RequestLog } };
