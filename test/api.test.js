@@ -1,61 +1,53 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { criarApp } = require('../index');
-
-async function servidor(iso, executar) {
-  const app = criarApp({ agora: () => new Date(iso) });
-  const server = app.listen(0);
-  try {
-    const base = `http://127.0.0.1:${server.address().port}`;
-    await executar(base);
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
-}
-
-test('lista, consulta, adiciona e remove jogos; gera PDF e consulta os logs', async () => {
-  await servidor('2026-09-28T15:20:00Z', async (base) => {
-    let resposta = await fetch(`${base}/jogos`);
-    assert.equal(resposta.status, 200);
-    assert.equal((await resposta.json()).length, 3);
-
-    resposta = await fetch(`${base}/jogos/1`);
-    assert.equal((await resposta.json()).id, '1');
-    assert.equal((await fetch(`${base}/jogos/inexistente`)).status, 404);
-
-    const novo = { id: '4', titulo: 'Jogo de teste', genero: 'Aventura', ano: 2024 };
-    resposta = await fetch(`${base}/jogos`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(novo)
-    });
-    assert.equal(resposta.status, 201);
-    assert.equal((await resposta.json()).id, '4');
-    assert.equal((await fetch(`${base}/jogos`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(novo)
-    })).status, 409);
-
-    resposta = await fetch(`${base}/jogos/pdf`);
-    assert.equal(resposta.status, 200);
-    assert.match(resposta.headers.get('content-type'), /application\/pdf/);
-    assert.match(resposta.headers.get('content-disposition'), /attachment/);
-    assert.equal(Buffer.from(await resposta.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
-
-    resposta = await fetch(`${base}/jogos/4`, { method: 'DELETE' });
-    assert.equal(resposta.status, 200);
-    assert.equal((await fetch(`${base}/jogos/4`)).status, 404);
-    assert.equal((await fetch(`${base}/logs?data=2026-02-30`)).status, 400);
-    resposta = await fetch(`${base}/logs?data=2026-09-28`);
-    const logs = await resposta.json();
-    assert.ok(logs.some((log) => log.rota === '/jogos/pdf' && log.horario === '12:20:00'));
-    assert.ok(logs.some((log) => log.metodo === 'DELETE' && log.rota === '/jogos/4'));
-  });
+const request = require('supertest');
+const mongoose = require('mongoose');
+const { MongoMemoryServer } = require('mongodb-memory-server');
+const { app, models } = require('../index');
+let mongo, ownerToken, customerToken;
+beforeAll(async () => {
+  process.env.JWT_SECRET = 'test-secret-at-least-32-characters-long';
+  process.env.SMTP_HOST = '';
+  mongo = await MongoMemoryServer.create();
+  await mongoose.connect(mongo.getUri());
 });
-
-test('bloqueia sábado e domingo, inclusive página inicial e PDF', async () => {
-  for (const dia of ['2026-09-26T15:00:00Z', '2026-09-27T15:00:00Z']) {
-    await servidor(dia, async (base) => {
-      for (const rota of ['/', '/jogos', '/jogos/pdf', '/logs?data=2026-09-27']) {
-        assert.equal((await fetch(base + rota)).status, 403);
-      }
-    });
-  }
+afterEach(async () => { await Promise.all(Object.values(models).map(model => model.deleteMany({}))); });
+afterAll(async () => { await mongoose.disconnect(); await mongo.stop(); });
+async function register(role, email) {
+  await request(app).post('/auth/register').send({ email, senha: 'senha-segura-123', role }).expect(201);
+  const user = await models.User.findOne({ email });
+  return require('jsonwebtoken').sign({ sub: user._id.toString(), role }, process.env.JWT_SECRET, { expiresIn: '1h' });
+}
+beforeEach(async () => {
+  ownerToken = await register('DONO', 'owner@example.com');
+  customerToken = await register('CLIENTE', 'customer@example.com');
+});
+test('health returns ok', async () => { await request(app).get('/health').expect(200, { status: 'ok' }); });
+test('passwords are hashed and duplicate email rejected', async () => {
+  const user = await models.User.findOne({ email: 'owner@example.com' });
+  expect(user.passwordHash).not.toBe('senha-segura-123');
+  await request(app).post('/auth/register').send({ email: 'owner@example.com', senha: 'senha-segura-123' }).expect(409);
+});
+test('owner creates game and game can be listed and fetched', async () => {
+  const response = await request(app).post('/jogos').set('Authorization', `Bearer ${ownerToken}`).send({ titulo: 'Hades', genero: 'Roguelike', ano: 2020 }).expect(201);
+  await request(app).get('/jogos').expect(200);
+  await request(app).get(`/jogos/${response.body._id}`).expect(200);
+});
+test('owner-only endpoints enforce authentication and role', async () => {
+  await request(app).post('/jogos').send({ titulo: 'Hades' }).expect(401);
+  await request(app).post('/jogos').set('Authorization', `Bearer ${customerToken}`).send({ titulo: 'Hades' }).expect(403);
+  await request(app).get('/jogos/export.csv').set('Authorization', `Bearer ${customerToken}`).expect(403);
+});
+test('CSV export downloads game data', async () => {
+  await models.Game.create({ titulo: 'Hades', owner: (await models.User.findOne({ email: 'owner@example.com' }))._id });
+  const response = await request(app).get('/jogos/export.csv').set('Authorization', `Bearer ${ownerToken}`).expect(200);
+  expect(response.headers['content-type']).toContain('text/csv');
+  expect(response.headers['content-disposition']).toContain('attachment');
+  expect(response.text).toContain('Hades');
+});
+test('login does not issue token when email 2FA is not configured', async () => {
+  await request(app).post('/login').send({ email: 'owner@example.com', senha: 'senha-segura-123' }).expect(503);
+});
+test('owner can delete game', async () => {
+  const game = await models.Game.create({ titulo: 'Hades', owner: (await models.User.findOne({ email: 'owner@example.com' }))._id });
+  await request(app).delete(`/jogos/${game._id}`).set('Authorization', `Bearer ${ownerToken}`).expect(200);
+  expect(await models.Game.findById(game._id)).toBeNull();
 });
