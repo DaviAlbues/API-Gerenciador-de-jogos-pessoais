@@ -133,6 +133,7 @@ app.get('/jogos/export.csv', authenticate, ownerOnly, asyncRoute(async (req, res
   res.setHeader('Content-Disposition', 'attachment; filename="jogos.csv"');
   res.send('\uFEFF' + csv);
 }));
+app.get('/jogos/disponiveis', authenticate, asyncRoute(async (req, res) => res.json(await Game.find({ disponivel: true }))));
 app.get('/jogos/:id', asyncRoute(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ erro: 'Jogo não encontrado.' });
   const game = await Game.findById(req.params.id).populate('owner', 'email');
@@ -159,7 +160,6 @@ app.delete('/jogos/:id', authenticate, ownerOnly, asyncRoute(async (req, res) =>
   await game.deleteOne();
   res.json({ mensagem: 'Jogo excluído com sucesso.' });
 }));
-app.get('/jogos/disponiveis', authenticate, asyncRoute(async (req, res) => res.json(await Game.find({ disponivel: true }))));
 app.post('/alugar/:id_jogo', authenticate, asyncRoute(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id_jogo)) return res.status(404).json({ erro: 'Jogo não encontrado.' });
   const game = await Game.findOneAndUpdate({ _id: req.params.id_jogo, disponivel: true }, { disponivel: false }, { new: true });
