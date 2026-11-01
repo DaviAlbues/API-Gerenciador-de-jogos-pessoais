@@ -54,3 +54,30 @@ test('owner can delete game', async () => {
   await request(app).delete(`/jogos/${game._id}`).set('Authorization', `Bearer ${ownerToken}`).expect(200);
   expect(await models.Game.findById(game._id)).toBeNull();
 });
+
+test('available games route requires authentication and returns games', async () => {
+  await request(app).get('/jogos/disponiveis').expect(401);
+  await models.Game.create({ titulo: 'Hades', owner: (await models.User.findOne({ email: 'owner@example.com' }))._id });
+  const response = await request(app).get('/jogos/disponiveis').set('Authorization', `Bearer ${customerToken}`).expect(200);
+  expect(response.body).toHaveLength(1);
+});
+test('customer can rent and return a game they rented', async () => {
+  const game = await models.Game.create({ titulo: 'Hades', owner: (await models.User.findOne({ email: 'owner@example.com' }))._id });
+  const rented = await request(app).post(`/alugar/${game._id}`).set('Authorization', `Bearer ${customerToken}`).expect(201);
+  await request(app).put(`/devolver/${rented.body.aluguel._id}`).set('Authorization', `Bearer ${customerToken}`).expect(200);
+  expect((await models.Game.findById(game._id)).disponivel).toBe(true);
+});
+test('logs validate date and PDF route responds as a downloadable PDF', async () => {
+  await request(app).get('/logs').set('Authorization', `Bearer ${ownerToken}`).expect(400);
+  const pdf = await request(app).get('/jogos/pdf').expect(200);
+  expect(pdf.headers['content-type']).toContain('application/pdf');
+  expect(pdf.headers['content-disposition']).toContain('attachment');
+});
+test('image upload validates payload and reports missing Cloudinary configuration', async () => {
+  await request(app).post('/jogos/upload-capa').set('Authorization', `Bearer ${ownerToken}`).send({ image: 'not-an-image' }).expect(400);
+  await request(app).post('/jogos/upload-capa').set('Authorization', `Bearer ${ownerToken}`).send({ image: 'data:image/png;base64,aGVsbG8=' }).expect(503);
+});
+test('invalid game IDs return not found', async () => {
+  await request(app).get('/jogos/not-an-object-id').expect(404);
+  await request(app).delete('/jogos/not-an-object-id').set('Authorization', `Bearer ${ownerToken}`).expect(404);
+});
