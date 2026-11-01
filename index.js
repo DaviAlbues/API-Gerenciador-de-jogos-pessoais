@@ -95,9 +95,10 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.post('/auth/register', asyncRoute(async (req, res) => {
   const { email, senha, role } = req.body;
   if (!email || !senha || senha.length < 8) return res.status(400).json({ erro: 'Informe email e senha com pelo menos 8 caracteres.' });
-  if (role && !['DONO', 'CLIENTE'].includes(role)) return res.status(400).json({ erro: 'Papel inválido.' });
+  if (role && role !== 'CLIENTE') return res.status(400).json({ erro: 'O cadastro público permite apenas CLIENTE.' });
   if (await User.findOne({ email: email.toLowerCase() })) return res.status(409).json({ erro: 'Email já cadastrado.' });
-  const user = await User.create({ email, passwordHash: await bcrypt.hash(senha, 12), role: role || 'CLIENTE' });
+  const assignedRole = process.env.OWNER_EMAIL && email.toLowerCase() === process.env.OWNER_EMAIL.toLowerCase() ? 'DONO' : 'CLIENTE';
+  const user = await User.create({ email, passwordHash: await bcrypt.hash(senha, 12), role: assignedRole });
   res.status(201).json({ id: user._id, email: user.email, role: user.role });
 }));
 
