@@ -1,5 +1,6 @@
 const request = require('supertest');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { app, models } = require('../index');
 let mongo, ownerToken, customerToken;
@@ -11,20 +12,22 @@ beforeAll(async () => {
 });
 afterEach(async () => { await Promise.all(Object.values(models).map(model => model.deleteMany({}))); });
 afterAll(async () => { await mongoose.disconnect(); await mongo.stop(); });
-async function register(role, email) {
-  await request(app).post('/auth/register').send({ email, senha: 'senha-segura-123', role }).expect(201);
-  const user = await models.User.findOne({ email });
+async function createUser(role, email) {
+  const user = await models.User.create({ email, role, passwordHash: await bcrypt.hash('senha-segura-123', 10) });
   return require('jsonwebtoken').sign({ sub: user._id.toString(), role }, process.env.JWT_SECRET, { expiresIn: '1h' });
 }
 beforeEach(async () => {
-  ownerToken = await register('DONO', 'owner@example.com');
-  customerToken = await register('CLIENTE', 'customer@example.com');
+  ownerToken = await createUser('DONO', 'owner@example.com');
+  customerToken = await createUser('CLIENTE', 'customer@example.com');
 });
 test('health returns ok', async () => { await request(app).get('/health').expect(200, { status: 'ok' }); });
-test('passwords are hashed and duplicate email rejected', async () => {
-  const user = await models.User.findOne({ email: 'owner@example.com' });
+test('public registration hashes password, defaults to customer, and prevents role escalation', async () => {
+  await request(app).post('/auth/register').send({ email: 'new@example.com', senha: 'senha-segura-123', role: 'DONO' }).expect(400);
+  await request(app).post('/auth/register').send({ email: 'new@example.com', senha: 'senha-segura-123' }).expect(201);
+  const user = await models.User.findOne({ email: 'new@example.com' });
   expect(user.passwordHash).not.toBe('senha-segura-123');
-  await request(app).post('/auth/register').send({ email: 'owner@example.com', senha: 'senha-segura-123' }).expect(409);
+  expect(user.role).toBe('CLIENTE');
+  await request(app).post('/auth/register').send({ email: 'new@example.com', senha: 'senha-segura-123' }).expect(409);
 });
 test('owner creates game and game can be listed and fetched', async () => {
   const response = await request(app).post('/jogos').set('Authorization', `Bearer ${ownerToken}`).send({ titulo: 'Hades', genero: 'Roguelike', ano: 2020 }).expect(201);
