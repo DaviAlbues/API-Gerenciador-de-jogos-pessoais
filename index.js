@@ -199,7 +199,34 @@ async function connectDatabase() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI não definida.');
   await mongoose.connect(process.env.MONGODB_URI);
 }
-if (require.main === module) connectDatabase().then(() => {
-  const port = process.env.PORT || 3000; app.listen(port, () => console.log(`API disponível na porta ${port}`));
-}).catch(error => { console.error('Falha ao conectar ao MongoDB:', error.message); process.exit(1); });
-module.exports = { app, connectDatabase, models: { User, Game, Rental, RequestLog } };
+
+async function connectDatabase() {
+  if (!process.env.MONGODB_URI) {
+    throw new Error('MONGODB_URI não definida no arquivo .env.');
+  }
+
+  await mongoose.connect(process.env.MONGODB_URI);
+  console.log('MongoDB conectado com sucesso!');
+}
+
+if (require.main === module) {
+  connectDatabase()
+    .then(() => {
+      const port = process.env.PORT || 3000;
+
+      app.listen(port, () => {
+        console.log(`API disponível na porta ${port}`);
+      });
+    })
+    .catch(error => {
+      console.error('Falha ao conectar ao MongoDB:', error.message);
+      process.exit(1);
+    });
+}
+
+module.exports = {
+  app,
+  connectDatabase,
+  models: { User, Game, Rental, RequestLog }
+};
+} };
